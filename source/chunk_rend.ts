@@ -4,6 +4,7 @@ import {cam3_t} from "@cl/camera/cam3.ts";
 import {mat4_t} from "@cl/math/mat4.ts";
 import {vec3, vec3_t} from "@cl/math/vec3.ts";
 import {rgb} from "@cl/math/vec3_color.ts";
+import { block_index, block_position, block_world_position, chunk_position, CHUNK_SCALE, chunk_t } from "./world";
 
 const layout = layout_new();
 layout_attrib(layout, ATTRIB_TYPE.F32, 3);
@@ -20,7 +21,6 @@ export class chunk_rdata_t {
     vao: WebGLVertexArrayObject;
     vbo: WebGLBuffer;
     ibo: WebGLBuffer;
-    tbo: WebGLTexture;
 };
 
 export function chunk_rdata_new(): chunk_rdata_t {
@@ -31,7 +31,6 @@ export function chunk_rdata_new(): chunk_rdata_t {
     rdata.vao = 0;
     rdata.vbo = 0;
     rdata.ibo = 0;
-    rdata.tbo = 0;
 
     return rdata;
 }
@@ -149,22 +148,6 @@ export function chunk_rend_render(rend: chunk_rend_t, rdata: chunk_rdata_t, cam:
 
     gl.bindVertexArray(rdata.vao);
     gl.drawElements(gl.TRIANGLES, rdata.index_count, gl.UNSIGNED_INT, 0);
-}
-
-export function model_rdata_texture(rdata: chunk_rdata_t, w: number, h: number, data: Uint8ClampedArray, is_flipped: boolean): void {
-    rdata.tbo = gl.createTexture();
-    gl.bindTexture(gl.TEXTURE_2D, rdata.tbo);
-    gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
-
-    if (is_flipped) {
-        gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true);
-    }
-
-    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, w, h, 0, gl.RGBA, gl.UNSIGNED_BYTE, data);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
 }
 
 export function get_uv_coords(block: number): [number, number, number, number] {
@@ -298,3 +281,38 @@ export function add_front_face(center: vec3_t, size: number, vertices: number[],
         base + 0, base + 1, base + 2, base + 0, base + 2, base + 3
     );
 }
+
+export function is_block_visible(chunk: chunk_t, x: number, y: number, z: number): boolean {
+    if (x < 0 || y < 0 || z < 0 || x >= CHUNK_SCALE || y >= CHUNK_SCALE || z >= CHUNK_SCALE) {
+        return true;
+    }
+
+    return !chunk.blocks[block_index(vec3(x, y, z))];
+}
+
+export function chunk_rdata_gen(chunk_rdata: chunk_rdata_t, chunk: chunk_t) {
+    const vertices = [];
+    const indices = [];
+    const chunk_pos = chunk_position(chunk.position);
+
+    for (let i = 0; i < chunk.blocks.length; i += 1) {
+        const block = chunk.blocks[i];
+
+        if (!block) continue;
+
+        const block_pos = block_position(i);
+        const [x, y, z] = block_pos;
+        const center = block_world_position(chunk_pos, block_pos);
+        const size = 1.0;
+
+        if (is_block_visible(chunk, x - 1, y, z)) add_left_face(center, size, vertices, indices, block - 1);
+        if (is_block_visible(chunk, x + 1, y, z)) add_right_face(center, size, vertices, indices, block - 1);
+        if (is_block_visible(chunk, x, y - 1, z)) add_down_face(center, size, vertices, indices, block - 1);
+        if (is_block_visible(chunk, x, y + 1, z)) add_up_face(center, size, vertices, indices, block - 1);
+        if (is_block_visible(chunk, x, y, z + 1)) add_back_face(center, size, vertices, indices, block - 1);
+        if (is_block_visible(chunk, x, y, z - 1)) add_front_face(center, size, vertices, indices, block - 1);
+    }
+
+    chunk_rdata_build(chunk_rdata, vertices, indices);
+}
+

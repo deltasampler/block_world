@@ -1,11 +1,12 @@
 import {create_canvas} from "@engine/canvas.ts";
 import {gl_init} from "@engine/gl.ts";
-import {add_back_face, add_down_face, add_front_face, add_left_face, add_right_face, add_up_face, chunk_rdata_build, chunk_rdata_new, chunk_rend_new, chunk_rend_render, model_rdata_texture} from "./chunk_rend.ts";
+import {add_back_face, add_down_face, add_front_face, add_left_face, add_right_face, add_up_face, chunk_rdata_build, chunk_rdata_gen, chunk_rdata_new, chunk_rend_new, chunk_rend_render, model_rdata_texture} from "./chunk_rend.ts";
 import {cam3_compute_proj, cam3_compute_view, cam3_fru, cam3_move_forward, cam3_move_right, cam3_new, cam3_pan, cam3_tilt} from "@cl/camera/cam3.ts";
 import {mat4} from "@cl/math/mat4.ts";
 import {io_init, io_kb_key_down, io_key_down, io_m_move, kb_event_t, m_event_t} from "@engine/io.ts";
-import {get_block_world_position, chunk_new, CHUNK_VOLUME, chunk_test, CHUNK_SCALE, get_block_coords} from "./chunk.ts";
-import { vec3, vec3_t } from "@cl/math/vec3.ts";
+import {vec3} from "@cl/math/vec3.ts";
+import {block_index, block_position, block_world_position, chunk_hash, CHUNK_SCALE, chunk_t, world_load_chunk, world_new} from "./world.ts";
+import {generate_frame, generate_random, generate_solid, generate_terrain} from "./generation.ts";
 
 import atlas_image from "./atlas.png" ;
 
@@ -49,48 +50,53 @@ const model = mat4(1.0);
 const camera = cam3_new();
 
 const chunk_rend = chunk_rend_new();
-const chunk_rdata = chunk_rdata_new();
+
+let tbo = 0;
 
 get_image_pixel_data(atlas_image).then((pixel_info) => {
-    model_rdata_texture(chunk_rdata, pixel_info.width, pixel_info.height, pixel_info.data, false)
+    tbo = gl.createTexture();
+    gl.bindTexture(gl.TEXTURE_2D, tbo);
+    gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
+
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, pixel_info.width, pixel_info.height, 0, gl.RGBA, gl.UNSIGNED_BYTE, pixel_info.data);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
 });
 
-const chunk = chunk_new(vec3());
-chunk_test(chunk);
+const world = world_new();
+generate_terrain(world_load_chunk(world, vec3(-1, 0, -1)));
+generate_terrain(world_load_chunk(world, vec3(0, 0, -1)));
+generate_terrain(world_load_chunk(world, vec3(1, 0, -1)));
+generate_terrain(world_load_chunk(world, vec3(-1, 0, 0)));
+generate_terrain(world_load_chunk(world, vec3(0, 0, 0)));
+generate_terrain(world_load_chunk(world, vec3(1, 0, 0)));
+generate_terrain(world_load_chunk(world, vec3(-1, 0, 1)));
+generate_terrain(world_load_chunk(world, vec3(0, 0, 1)));
+generate_terrain(world_load_chunk(world, vec3(1, 0, 1)));
 
-const vertices: number[] = [];
-const indices: number[] = [];
+const chunk_rdatas = {};
 
-function coords_to_index(x: number, y: number, z: number): number {
-    return x + z * CHUNK_SCALE + y * CHUNK_SCALE * CHUNK_SCALE;
-}
+function push_chunk_rdata(chunk: chunk_t) {
+    const hash = chunk_hash(chunk.position);
 
-function is_block_visible(x: number, y: number, z: number): boolean {
-    if (x < 0 || y < 0 || z < 0 || x >= CHUNK_SCALE || y >= CHUNK_SCALE || z >= CHUNK_SCALE) {
-        return true;
+    if (chunk_rdatas[hash]) {
+        return chunk_rdatas[hash];
     }
 
-    return !chunk.blocks[coords_to_index(x, y, z)];
+    const chunk_rdata = chunk_rdata_new();
+    chunk_rdata_gen(chunk_rdata, chunk);
+
+    chunk_rdatas[hash] = chunk_rdata;
+
+    return chunk_rdata;
 }
 
-for (let i = 0; i < chunk.blocks.length; i += 1) {
-    const block = chunk.blocks[i];
-
-    if (!block) continue;
-
-    const [x, y, z] = get_block_coords(i);
-    const center = get_block_world_position(chunk.position, i);
-    const size = 1.0;
-
-    if (is_block_visible(x - 1, y, z)) add_left_face(center, size, vertices, indices, block - 1);
-    if (is_block_visible(x + 1, y, z)) add_right_face(center, size, vertices, indices, block - 1);
-    if (is_block_visible(x, y - 1, z)) add_down_face(center, size, vertices, indices, block - 1);
-    if (is_block_visible(x, y + 1, z)) add_up_face(center, size, vertices, indices, block - 1);
-    if (is_block_visible(x, y, z + 1)) add_back_face(center, size, vertices, indices, block - 1);
-    if (is_block_visible(x, y, z - 1)) add_front_face(center, size, vertices, indices, block - 1);
+for (const key in world.chunks) {
+    const chunk = world.chunks[key];
+    push_chunk_rdata(chunk);
 }
-
-chunk_rdata_build(chunk_rdata, vertices, indices);
 
 io_m_move(function(event: m_event_t): void {
     if (document.pointerLockElement === canvas_el) {
@@ -141,7 +147,12 @@ function render(): void {
     gl.clearColor(0.0, 0.0, 0.0, 1.0);
     gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
 
-    chunk_rend_render(chunk_rend, chunk_rdata, camera, model);
+
+    for (const key in chunk_rdatas) {
+        const chunk_rdata = chunk_rdatas[key];
+
+        chunk_rend_render(chunk_rend, chunk_rdata, camera, model);
+    }
 }
 
 function loop(): void {
