@@ -10,6 +10,9 @@ layout_attrib(layout, ATTRIB_TYPE.F32, 3);
 layout_attrib(layout, ATTRIB_TYPE.F32, 3);
 layout_attrib(layout, ATTRIB_TYPE.F32, 2);
 
+export const ATLAS_SIZE = 1024;
+export const CELL_SIZE = 32;
+
 export class chunk_rdata_t {
     vertices: Float32Array;
     indices: Uint32Array;
@@ -17,6 +20,7 @@ export class chunk_rdata_t {
     vao: WebGLVertexArrayObject;
     vbo: WebGLBuffer;
     ibo: WebGLBuffer;
+    tbo: WebGLTexture;
 };
 
 export function chunk_rdata_new(): chunk_rdata_t {
@@ -27,6 +31,7 @@ export function chunk_rdata_new(): chunk_rdata_t {
     rdata.vao = 0;
     rdata.vbo = 0;
     rdata.ibo = 0;
+    rdata.tbo = 0;
 
     return rdata;
 }
@@ -85,6 +90,7 @@ export function chunk_rend_new(): chunk_rend_t {
             in vec2 v_tex_coord;
             uniform vec3 u_light_dir;
             uniform vec3 u_light_color;
+            uniform sampler2D u_texture;
 
             float uv_border_width(vec2 uv, vec2 size) {
                 float left = smoothstep(0.0, size.x, uv.x);
@@ -114,7 +120,7 @@ export function chunk_rend_new(): chunk_rend_t {
                 float diffuse_factor = max(0.2, dot(v_normal, light_dir));
                 vec3 diffuse = diffuse_factor * u_light_color;
 
-                vec3 color = (ambient + diffuse) * block_color;
+                vec3 color = (ambient + diffuse) * texture(u_texture, v_tex_coord).xyz;
 
                 o_frag_color = vec4(color, 1.0);
             }
@@ -145,17 +151,52 @@ export function chunk_rend_render(rend: chunk_rend_t, rdata: chunk_rdata_t, cam:
     gl.drawElements(gl.TRIANGLES, rdata.index_count, gl.UNSIGNED_INT, 0);
 }
 
-export function add_left_face(center: vec3_t, size: number, vertices: number[], indices: number[]): void {
+export function model_rdata_texture(rdata: chunk_rdata_t, w: number, h: number, data: Uint8ClampedArray, is_flipped: boolean): void {
+    rdata.tbo = gl.createTexture();
+    gl.bindTexture(gl.TEXTURE_2D, rdata.tbo);
+    gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
+
+    if (is_flipped) {
+        gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true);
+    }
+
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, w, h, 0, gl.RGBA, gl.UNSIGNED_BYTE, data);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+}
+
+export function get_uv_coords(block: number): [number, number, number, number] {
+    const cols = ATLAS_SIZE / CELL_SIZE; // 32
+
+    const x = block % cols;
+    const y = Math.floor(block / cols);
+
+    const paddingPixels = 1;
+    const padding = paddingPixels / ATLAS_SIZE;
+
+    const u = x * CELL_SIZE / ATLAS_SIZE + padding;
+    const v = y * CELL_SIZE / ATLAS_SIZE + padding;
+
+    const du = CELL_SIZE / ATLAS_SIZE - 2 * padding;
+    const dv = CELL_SIZE / ATLAS_SIZE - 2 * padding;
+
+    return [u, v, u + du, v + dv];
+}
+
+export function add_left_face(center: vec3_t, size: number, vertices: number[], indices: number[], block: number): void {
     const [cx, cy, cz] = center;
     const s = size * 0.5;
 
     const base = vertices.length / 8;
+    const [u0, v0, u1, v1] = get_uv_coords(block);
 
     vertices.push(
-        cx - s, cy - s, cz - s, -1, 0, 0, 0, 0,
-        cx - s, cy - s, cz + s, -1, 0, 0, 1, 0,
-        cx - s, cy + s, cz + s, -1, 0, 0, 1, 1,
-        cx - s, cy + s, cz - s, -1, 0, 0, 0, 1
+        cx - s, cy - s, cz - s, -1, 0, 0, u0, v0,
+        cx - s, cy - s, cz + s, -1, 0, 0, u1, v0,
+        cx - s, cy + s, cz + s, -1, 0, 0, u1, v1,
+        cx - s, cy + s, cz - s, -1, 0, 0, u0, v1
     );
 
     indices.push(
@@ -163,17 +204,18 @@ export function add_left_face(center: vec3_t, size: number, vertices: number[], 
     );
 }
 
-export function add_right_face(center: vec3_t, size: number, vertices: number[], indices: number[]): void {
+export function add_right_face(center: vec3_t, size: number, vertices: number[], indices: number[], block: number): void {
     const [cx, cy, cz] = center;
     const s = size * 0.5;
 
     const base = vertices.length / 8;
+    const [u0, v0, u1, v1] = get_uv_coords(block);
 
     vertices.push(
-        cx + s, cy - s, cz + s, 1, 0, 0, 0, 0,
-        cx + s, cy - s, cz - s, 1, 0, 0, 1, 0,
-        cx + s, cy + s, cz - s, 1, 0, 0, 1, 1,
-        cx + s, cy + s, cz + s, 1, 0, 0, 0, 1
+        cx + s, cy - s, cz + s, 1, 0, 0, u0, v0,
+        cx + s, cy - s, cz - s, 1, 0, 0, u1, v0,
+        cx + s, cy + s, cz - s, 1, 0, 0, u1, v1,
+        cx + s, cy + s, cz + s, 1, 0, 0, u0, v1
     );
 
     indices.push(
@@ -181,17 +223,18 @@ export function add_right_face(center: vec3_t, size: number, vertices: number[],
     );
 }
 
-export function add_down_face(center: vec3_t, size: number, vertices: number[], indices: number[]): void {
+export function add_down_face(center: vec3_t, size: number, vertices: number[], indices: number[], block: number): void {
     const [cx, cy, cz] = center;
     const s = size * 0.5;
 
     const base = vertices.length / 8;
+    const [u0, v0, u1, v1] = get_uv_coords(block);
 
     vertices.push(
-        cx - s, cy - s, cz + s, 0, -1, 0, 0, 0,
-        cx - s, cy - s, cz - s, 0, -1, 0, 1, 0,
-        cx + s, cy - s, cz - s, 0, -1, 0, 1, 1,
-        cx + s, cy - s, cz + s, 0, -1, 0, 0, 1
+        cx - s, cy - s, cz + s, 0, -1, 0, u0, v0,
+        cx - s, cy - s, cz - s, 0, -1, 0, u1, v0,
+        cx + s, cy - s, cz - s, 0, -1, 0, u1, v1,
+        cx + s, cy - s, cz + s, 0, -1, 0, u0, v1
     );
 
     indices.push(
@@ -199,17 +242,18 @@ export function add_down_face(center: vec3_t, size: number, vertices: number[], 
     );
 }
 
-export function add_up_face(center: vec3_t, size: number, vertices: number[], indices: number[]): void {
+export function add_up_face(center: vec3_t, size: number, vertices: number[], indices: number[], block: number): void {
     const [cx, cy, cz] = center;
     const s = size * 0.5;
 
     const base = vertices.length / 8;
+    const [u0, v0, u1, v1] = get_uv_coords(block);
 
     vertices.push(
-        cx - s, cy + s, cz - s, 0, 1, 0, 0, 0,
-        cx - s, cy + s, cz + s, 0, 1, 0, 1, 0,
-        cx + s, cy + s, cz + s, 0, 1, 0, 1, 1,
-        cx + s, cy + s, cz - s, 0, 1, 0, 0, 1
+        cx - s, cy + s, cz - s, 0, 1, 0, u0, v0,
+        cx - s, cy + s, cz + s, 0, 1, 0, u1, v0,
+        cx + s, cy + s, cz + s, 0, 1, 0, u1, v1,
+        cx + s, cy + s, cz - s, 0, 1, 0, u0, v1
     );
 
     indices.push(
@@ -217,17 +261,18 @@ export function add_up_face(center: vec3_t, size: number, vertices: number[], in
     );
 }
 
-export function add_back_face(center: vec3_t, size: number, vertices: number[], indices: number[]): void {
+export function add_back_face(center: vec3_t, size: number, vertices: number[], indices: number[], block: number): void {
     const [cx, cy, cz] = center;
     const s = size * 0.5;
 
     const base = vertices.length / 8;
+    const [u0, v0, u1, v1] = get_uv_coords(block);
 
     vertices.push(
-        cx - s, cy - s, cz + s, 0, 0, 1, 0, 0,
-        cx + s, cy - s, cz + s, 0, 0, 1, 1, 0,
-        cx + s, cy + s, cz + s, 0, 0, 1, 1, 1,
-        cx - s, cy + s, cz + s, 0, 0, 1, 0, 1
+        cx - s, cy - s, cz + s, 0, 0, 1, u0, v0,
+        cx + s, cy - s, cz + s, 0, 0, 1, u1, v0,
+        cx + s, cy + s, cz + s, 0, 0, 1, u1, v1,
+        cx - s, cy + s, cz + s, 0, 0, 1, u0, v1
     );
 
     indices.push(
@@ -235,17 +280,18 @@ export function add_back_face(center: vec3_t, size: number, vertices: number[], 
     );
 }
 
-export function add_front_face(center: vec3_t, size: number, vertices: number[], indices: number[]): void {
+export function add_front_face(center: vec3_t, size: number, vertices: number[], indices: number[], block: number): void {
     const [cx, cy, cz] = center;
     const s = size * 0.5;
 
     const base = vertices.length / 8;
+    const [u0, v0, u1, v1] = get_uv_coords(block);
 
     vertices.push(
-        cx + s, cy - s, cz - s, 0, 0, 1, 0, 0,
-        cx - s, cy - s, cz - s, 0, 0, 1, 1, 0,
-        cx - s, cy + s, cz - s, 0, 0, 1, 1, 1,
-        cx + s, cy + s, cz - s, 0, 0, 1, 0, 1
+        cx + s, cy - s, cz - s, 0, 0, 1, u0, v0,
+        cx - s, cy - s, cz - s, 0, 0, 1, u1, v0,
+        cx - s, cy + s, cz - s, 0, 0, 1, u1, v1,
+        cx + s, cy + s, cz - s, 0, 0, 1, u0, v1
     );
 
     indices.push(

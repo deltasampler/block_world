@@ -21,14 +21,23 @@ export function get_chunk_position(position: vec3_t): vec3_t {
     return vec3n_muls(position, CHUNK_SCALE);
 }
 
+export function get_block_coords(index: number): vec3_t {
+    return vec3(
+        index % CHUNK_SCALE,
+        Math.floor(index / (CHUNK_SCALE * CHUNK_SCALE)),
+        Math.floor(index / CHUNK_SCALE) % CHUNK_SCALE
+    );
+}
+
 export function get_block_position(index: number): vec3_t {
+    const out = get_block_coords(index);
     const h = CHUNK_SCALE / 2;
 
-    return vec3(
-        index % CHUNK_SCALE + 0.5 - h,
-        Math.floor(index / CHUNK_SCALE) % CHUNK_SCALE + 0.5 - h,
-        Math.floor(index / (CHUNK_SCALE * CHUNK_SCALE)) + 0.5 - h
-    );
+    out[0] += 0.5 - h;
+    out[1] += 0.5 - h;
+    out[2] += 0.5 - h;
+
+    return out;
 }
 
 export function get_block_world_position(position: vec3_t, index: number): vec3_t {
@@ -41,8 +50,16 @@ export function chunk_test(chunk: chunk_t): void {
     for (let i = 0; i < chunk.blocks.length; i++) {
         const block_pos = get_block_position(i);
 
-        if (vec3_dist(vec3(), block_pos) < r) {
-            chunk.blocks[i] = 1;
+        const d = vec3_dist(vec3(), block_pos);
+
+        if (d < r) {
+            if (block_pos[1] < 0) {
+                chunk.blocks[i] = 1;
+            } else if (block_pos[1] > 0 && block_pos[1] < 1) {
+                chunk.blocks[i] = 2;
+            } else {
+                chunk.blocks[i] = 0;
+            }
         } else {
             chunk.blocks[i] = 0;
         }
