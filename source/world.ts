@@ -34,12 +34,14 @@ export function block_world_position(chunk_position: vec3_t, block_position: vec
 export class chunk_t {
     position: vec3_t;
     blocks: Uint32Array;
+    is_loaded: boolean;
 };
 
 export function chunk_new(position: vec3_t): chunk_t {
     const chunk = new chunk_t();
     chunk.position = vec3n_copy(position);
     chunk.blocks = new Uint32Array(CHUNK_VOLUME);
+    chunk.is_loaded = false;
 
     return chunk;
 }
@@ -89,4 +91,12 @@ export function world_unload_chunk(world: world_t, position: vec3_t): void {
     }
 
     delete world.chunks[hash];
+}
+
+export function chunk_position_from_world(position: vec3_t): vec3_t {
+    return vec3(
+        Math.round(position[0] / CHUNK_SCALE),
+        Math.round(position[1] / CHUNK_SCALE),
+        Math.round(position[2] / CHUNK_SCALE)
+    );
 }

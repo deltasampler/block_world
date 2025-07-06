@@ -291,8 +291,8 @@ export function is_block_visible(chunk: chunk_t, x: number, y: number, z: number
 }
 
 export function chunk_rdata_gen(chunk_rdata: chunk_rdata_t, chunk: chunk_t) {
-    const vertices = [];
-    const indices = [];
+    const vertices: number[] = [];
+    const indices: number[] = [];
     const chunk_pos = chunk_position(chunk.position);
 
     for (let i = 0; i < chunk.blocks.length; i += 1) {

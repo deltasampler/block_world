@@ -1,12 +1,12 @@
 import {create_canvas} from "@engine/canvas.ts";
 import {gl_init} from "@engine/gl.ts";
-import {add_back_face, add_down_face, add_front_face, add_left_face, add_right_face, add_up_face, chunk_rdata_build, chunk_rdata_gen, chunk_rdata_new, chunk_rend_new, chunk_rend_render, model_rdata_texture} from "./chunk_rend.ts";
+import {chunk_rdata_gen, chunk_rdata_new, chunk_rdata_t, chunk_rend_new, chunk_rend_render} from "./chunk_rend.ts";
 import {cam3_compute_proj, cam3_compute_view, cam3_fru, cam3_move_forward, cam3_move_right, cam3_new, cam3_pan, cam3_tilt} from "@cl/camera/cam3.ts";
 import {mat4} from "@cl/math/mat4.ts";
 import {io_init, io_kb_key_down, io_key_down, io_m_move, kb_event_t, m_event_t} from "@engine/io.ts";
 import {vec3} from "@cl/math/vec3.ts";
-import {block_index, block_position, block_world_position, chunk_hash, CHUNK_SCALE, chunk_t, world_load_chunk, world_new} from "./world.ts";
-import {generate_frame, generate_random, generate_solid, generate_terrain} from "./generation.ts";
+import {chunk_hash, chunk_position_from_world, chunk_t, world_load_chunk, world_new} from "./world.ts";
+import {generate_terrain} from "./generation.ts";
 
 import atlas_image from "./atlas.png" ;
 
@@ -66,17 +66,8 @@ get_image_pixel_data(atlas_image).then((pixel_info) => {
 });
 
 const world = world_new();
-generate_terrain(world_load_chunk(world, vec3(-1, 0, -1)));
-generate_terrain(world_load_chunk(world, vec3(0, 0, -1)));
-generate_terrain(world_load_chunk(world, vec3(1, 0, -1)));
-generate_terrain(world_load_chunk(world, vec3(-1, 0, 0)));
-generate_terrain(world_load_chunk(world, vec3(0, 0, 0)));
-generate_terrain(world_load_chunk(world, vec3(1, 0, 0)));
-generate_terrain(world_load_chunk(world, vec3(-1, 0, 1)));
-generate_terrain(world_load_chunk(world, vec3(0, 0, 1)));
-generate_terrain(world_load_chunk(world, vec3(1, 0, 1)));
 
-const chunk_rdatas = {};
+const chunk_rdatas: {[key: string]: chunk_rdata_t} = {};
 
 function push_chunk_rdata(chunk: chunk_t) {
     const hash = chunk_hash(chunk.position);
@@ -137,6 +128,30 @@ function update(): void {
     cam3_fru(camera);
     cam3_compute_proj(camera, canvas_el.width, canvas_el.height);
     cam3_compute_view(camera);
+
+    const load_range = 1;
+
+    const center_chunk_pos = chunk_position_from_world(camera.position);
+
+    for (let dx = -load_range; dx <= load_range; dx++) {
+        for (let dy = -load_range; dy <= load_range; dy++) {
+            for (let dz = -load_range; dz <= load_range; dz++) {
+                const neighbor_pos = vec3(
+                    center_chunk_pos[0] + dx,
+                    center_chunk_pos[1] + dy,
+                    center_chunk_pos[2] + dz
+                );
+
+                const chunk = world_load_chunk(world, neighbor_pos);
+
+                if (!chunk.is_loaded) {
+                    generate_terrain(chunk);
+                    push_chunk_rdata(chunk);
+                    chunk.is_loaded = true;
+                }
+            }
+        }
+    }
 }
 
 gl.enable(gl.DEPTH_TEST);
@@ -146,7 +161,6 @@ function render(): void {
     gl.viewport(0, 0, canvas_el.width, canvas_el.height);
     gl.clearColor(0.0, 0.0, 0.0, 1.0);
     gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
-
 
     for (const key in chunk_rdatas) {
         const chunk_rdata = chunk_rdatas[key];
